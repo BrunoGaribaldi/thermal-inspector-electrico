@@ -1,0 +1,16 @@
+# Inspector Termográfico — Dependencias
+# ----------------------------------------
+# Instalar con:
+#   pip install -r requirements.txt --break-system-packages
+#
+# O via apt (Ubuntu):
+#   sudo apt install python3-matplotlib python3-reportlab python3-pil python3-pil.imagetk
+
+numpy>=1.24
+Pillow>=9.0
+reportlab>=4.0
+matplotlib>=3.6
+
+# Ya incluido en Python 3 estándar:
+# tkinter (python3-tk)
+# argparse, subprocess, dataclasses, pathlib, io, os, sys, math, enum, re, datetime
