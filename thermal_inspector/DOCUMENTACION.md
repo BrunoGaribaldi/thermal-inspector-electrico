@@ -53,7 +53,8 @@ las funciones del SDK como comandos de terminal.
 2. Llama a `dji_irp` via `subprocess` para extraer datos de temperatura y pseudocolor.
 3. Abre una interfaz gráfica (tkinter) para definir regiones de interés (ROIs).
 4. Analiza temperaturas en las ROIs definidas.
-5. Genera un informe PDF profesional con termogramas, gráficos y diagnósticos.
+5. Anota la imagen térmica con las marcas de ROI (líneas y cajas visibles en el PDF).
+6. Genera un informe PDF profesional con logo, termogramas, gráficos y diagnósticos.
 
 ### Cámaras soportadas
 
@@ -87,19 +88,22 @@ roi_tool.py ─────── Ventana tkinter interactiva
   │                  └── Dibuja cajas (BoxROI) sobre componentes
   ▼
 analyzer.py ─────── Calcula estadísticas por ROI
-  │                  ├── t_max, t_min, t_mean por línea/caja
+  │                  ├── t_max, t_min, t_mean, t_start, t_end por línea
+  │                  ├── t_max, t_min, t_mean por caja
   │                  ├── ΔT = t_max - t_mean (global)
   │                  └── Clasificación: Normal/Leve/Moderado/Serio/Crítico
   ▼
-main.py ─────────── Solicita datos textuales al usuario (ubicación, equipo, etc.)
-  │
+main.py ─────────── Anota la imagen con ROIs (líneas + cajas dibujadas)
+  │                  Solicita datos textuales al usuario
   ▼
 reporter.py ─────── Genera PDF con ReportLab
-                     ├── Portada con datos del informe
+                     ├── Portada con logo QNT Drones + datos del informe
                      ├── Índice de termogramas
                      └── Una página por termograma:
-                         ├── Imagen pseudocolor + imagen visual
+                         ├── Imagen pseudocolor (con ROIs marcados) + imagen visual
                          ├── Tabla de datos + gráfico de perfil térmico
+                         ├── Gráfico de temperaturas en puntos A/B
+                         ├── Tabla de estadísticas por línea
                          └── Diagnóstico + recomendaciones
 ```
 
@@ -110,9 +114,7 @@ Imagen R-JPEG ──→ dji_irp ──→ cache/<stem>/measure_float32.raw  (tem
                           └──→ cache/<stem>/process_hot_iron.raw (pseudocolor)
 ```
 
-Los `.raw` se guardan en `thermal_inspector/cache/<nombre_imagen>/` y se reutilizan
-si ya existen (aunque el código actual no verifica la existencia antes de re-ejecutar
-`dji_irp`; siempre lo re-ejecuta).
+Los `.raw` se guardan en `thermal_inspector/cache/<nombre_imagen>/`.
 
 ---
 
@@ -225,6 +227,7 @@ Al ejecutar, el sistema:
 3. **Por cada imagen térmica:**
    - Extrae temperatura y pseudocolor via `dji_irp`.
    - Abre la ventana de **selección de ROI** (tkinter).
+   - Anota la imagen térmica con las marcas de ROI.
    - Pide datos textuales (equipo, componente, diagnóstico, etc.).
 4. **Genera el PDF** al finalizar todas las imágenes.
 
@@ -241,7 +244,7 @@ Al ejecutar, el sistema:
 | `q` o cerrar ventana | Finalizar y continuar |
 
 **Líneas** (`Li1`, `Li2`, ...): Se dibujan sobre cables o elementos lineales.
-Generan un perfil térmico continuo (gráfico en el PDF).
+Generan un perfil térmico continuo y un gráfico de temperaturas en los extremos.
 
 **Cajas** (`Bx1`, `Bx2`, ...): Se dibujan sobre componentes rectangulares.
 Reportan temperatura máxima del área encerrada.
@@ -256,11 +259,25 @@ Orquesta todo el flujo. Funciones principales:
 
 | Función | Descripción |
 |---------|-------------|
+| `_annotate_image(color_rgb, lines, boxes)` | Dibuja las marcas de ROI sobre una copia de la imagen pseudocolor |
 | `parse_args()` | Define y parsea argumentos CLI con `argparse` |
 | `collect_meta(args)` | Pide datos del informe al usuario (interactivo) |
 | `collect_entry_inputs(pole_name, ubicacion)` | Pide datos por imagen (ubicación, equipo, componente, diagnóstico, etc.) |
-| `process_image(pair, args, cache_base)` | Pipeline completo para una imagen: extracción → ROI → análisis |
+| `process_image(pair, args, cache_base)` | Pipeline completo para una imagen: extracción → ROI → análisis → anotación |
 | `main()` | Flujo principal: buscar imágenes → procesar → generar PDF |
+
+**`_annotate_image(color_rgb, lines, boxes) → ndarray`**
+
+Dibuja sobre una copia de la imagen pseudocolor:
+- **Líneas**: con los mismos colores que los gráficos (rojo, verde, azul, naranja, púrpura), incluyendo
+  puntos en los extremos y etiquetas (`Li1`, `Li2`...).
+- **Cajas**: en amarillo con etiquetas (`Bx1`, `Bx2`...).
+- Usa fuente DejaVu Bold 14px (con fallback a fuente default).
+
+La imagen anotada es la que aparece en el termograma del PDF.
+
+**Logo:** `main.py` busca automáticamente `qntDrones.png` en la raíz del SDK
+(un nivel arriba de `thermal_inspector/`). Si lo encuentra, lo pasa al reporte.
 
 **Salida por defecto:** `thermal_inspector/output/Informe_Termografico_YYYYMMDD_HHMMSS.pdf`
 
@@ -394,8 +411,11 @@ Rectángulo definido por esquina superior-izquierda y esquina inferior-derecha.
 
 #### Funciones internas
 
-**`_sample_line(temp_array, p1, p2, n_samples=200) → ndarray`**
-Muestrea 200 valores de temperatura a lo largo de la línea (interpolación lineal de coordenadas).
+**`_sample_line(temp_array, p1, p2, n_samples=None) → ndarray`**
+Muestrea temperaturas a lo largo de la línea. Por defecto (`n_samples=None`),
+calcula automáticamente la cantidad de muestras según la longitud en píxeles de la
+línea (`hypot(dx, dy)`), tomando un valor por cada píxel real. Si se pasa un valor
+explícito, usa ese número fijo de muestras.
 
 **`_sample_box(temp_array, roi) → ndarray`**
 Extrae todos los valores de temperatura dentro del rectángulo.
@@ -422,8 +442,10 @@ Retorna:
             "t_max": float,
             "t_min": float,
             "t_mean": float,
+            "t_start": float,   # Temperatura en el punto A (inicio de la línea)
+            "t_end": float,     # Temperatura en el punto B (fin de la línea)
             "n": int,           # número de muestras
-            "samples": list,    # valores individuales (para gráfico)
+            "samples": list,    # valores individuales (para gráfico de perfil)
         }, ...
     ],
     "box_stats": [          # Estadísticas por caja
@@ -444,7 +466,8 @@ Si no se definieron ROIs, las estadísticas globales se calculan sobre la imagen
 
 Genera un gráfico de torta para distribución de categorías visuales de archivos.
 Se usa con un `DataFrame` de pandas. No es parte del flujo principal de inspección;
-es una utilidad auxiliar que quedó de una versión anterior.
+es una utilidad auxiliar que quedó de una versión anterior. Requiere `pandas` instalado
+solo si se invoca esta clase.
 
 ---
 
@@ -508,7 +531,8 @@ report = ThermalReport(
         "ubicacion_general": "...",
         "id_informe": "INF-20260325-1430",
         "fecha": "25/03/2026",
-    }
+    },
+    logo_path="/ruta/a/logo.png",   # opcional, se muestra en la portada
 )
 ```
 
@@ -517,7 +541,7 @@ Agrega un termograma al informe. `entry` es un diccionario con:
 
 | Clave | Tipo | Descripción |
 |-------|------|-------------|
-| `color_rgb` | `ndarray (H,W,3)` | Imagen pseudocolor |
+| `color_rgb` | `ndarray (H,W,3)` | Imagen pseudocolor con ROIs anotados |
 | `rgb_path` | `str | None` | Ruta a la imagen visual |
 | `ubicacion` | `str` | Ubicación del componente |
 | `equipo` | `str` | Nombre del equipo |
@@ -526,9 +550,8 @@ Agrega un termograma al informe. `entry` es un diccionario con:
 | `prioridad` | `str` | Prioridad de intervención |
 | `precinto` | `str` | Número de precinto |
 | `t_max` | `float` | Temperatura máxima |
-| `line_stats` | `list` | Estadísticas de líneas (con `samples`) |
+| `line_stats` | `list` | Estadísticas de líneas (con `samples`, `t_start`, `t_end`) |
 | `box_stats` | `list` | Estadísticas de cajas |
-| `spot_stats` | `list` | (reservado, no usado actualmente) |
 | `diagnostico_texto` | `str` | Texto libre de diagnóstico |
 | `recomendaciones` | `str` | Recomendaciones |
 | `reparaciones` | `str` | Reparaciones realizadas |
@@ -540,6 +563,7 @@ Genera el PDF. Estructura del documento:
 
 ```
 Página 1: Portada
+  - Logo QNT Drones (si existe qntDrones.png en la raíz del SDK)
   - Título "Mantenimiento Predictivo - Termografía"
   - Tabla con datos del informe
 
@@ -551,22 +575,47 @@ Páginas 3+: Un termograma por página
   ┌────────────────────┬────────────────────┐
   │    TERMOGRAMA      │   IMAGEN VISUAL    │  ← encabezados azules
   ├────────────────────┼────────────────────┤
-  │  (pseudocolor)     │  (foto RGB)        │  ← imágenes
+  │  (pseudocolor con  │  (foto RGB)        │  ← imágenes
+  │   ROIs marcados)   │                    │
   ├────────────────────┼────────────────────┤
   │   TABLA DE DATOS   │  PERFIL TÉRMICO    │  ← encabezados azules
   ├────────────────────┼────────────────────┤
-  │  Ubicación: ...    │  (gráfico líneas)  │
+  │  Ubicación: ...    │  (gráfico perfil)  │
   │  Equipo: ...       │                    │
-  │  Diagnóstico: ...  │  ┌──────────────┐  │
-  │  Measurements      │  │ Li1 min max  │  │
-  │  Bx1 Maximum: X°C  │  │ Li2 min max  │  │
-  │  ...               │  └──────────────┘  │
+  │  Diagnóstico: ...  │  (gráfico puntos   │
+  │  Measurements      │   A/B extremos)    │
+  │  Bx1 Maximum: X°C  │                    │
+  │  ...               │  ┌──────────────┐  │
+  │                    │  │ Li1 min max  │  │
+  │                    │  │ Li2 min max  │  │
+  │                    │  └──────────────┘  │
   ├────────────────────┴────────────────────┤
   │  DIAGNÓSTICO: texto libre               │
   │  RECOMENDACIONES: texto libre            │
   │  REPARACIONES REALIZADAS: texto libre    │
   └─────────────────────────────────────────┘
 ```
+
+#### Gráficos generados
+
+**`_make_profile_chart()`** — Perfil térmico continuo. Grafica los valores de
+temperatura muestreados pixel a pixel a lo largo de cada `LineROI`.
+Eje X: posición a lo largo de la línea (en píxeles). Eje Y: temperatura (°C).
+
+**`_make_endpoints_chart()`** — Temperaturas en puntos de referencia. Muestra las
+temperaturas en los extremos (Punto A = inicio, Punto B = fin) de cada línea.
+Usa marcadores: círculo para Punto A, cuadrado para Punto B. Incluye los valores
+de temperatura anotados y una leyenda.
+
+Cada línea se muestra en un color distinto (compartido entre ambos gráficos):
+
+| Línea | Color |
+|-------|-------|
+| Li1 | Rojo (`#C0392B`) |
+| Li2 | Verde (`#27AE60`) |
+| Li3 | Azul (`#2980B9`) |
+| Li4 | Naranja (`#E67E22`) |
+| Li5 | Púrpura (`#8E44AD`) |
 
 #### Colores corporativos
 
@@ -577,21 +626,9 @@ Páginas 3+: Un termograma por página
 | `GREEN_OK` | `#92D050` | Celda "Admisible" / "Normal" |
 | `GREY_BG` | `#F2F2F2` | Fondo de celdas de la portada |
 
-#### Gráfico de perfil térmico
-
-La función `_make_profile_chart()` grafica los valores de temperatura muestreados
-a lo largo de cada `LineROI`. Cada línea se muestra en un color distinto:
-
-| Línea | Color |
-|-------|-------|
-| Li1 | Rojo (`#C0392B`) |
-| Li2 | Verde (`#27AE60`) |
-| Li3 | Azul (`#2980B9`) |
-| Li4 | Naranja (`#E67E22`) |
-| Li5 | Púrpura (`#8E44AD`) |
-
-> **Para modificar:** Los colores están en `_LINE_COLORS_MPL` (matplotlib) y
+> **Para modificar colores:** Están en `_LINE_COLORS_MPL` (matplotlib) y
 > `_LINE_COLORS_RL` (ReportLab). Modificá ambas listas para mantener consistencia.
+> También actualizar `_LINE_COLORS_PIL` en `main.py` para la anotación de imagen.
 
 ---
 
@@ -643,6 +680,7 @@ dji_thermal_sdk_v1.8_20250829/
 ├── Readme.md                           # Documentación oficial del SDK
 ├── History.txt                         # Changelog (v1.0 → v1.8)
 ├── License.txt                         # Licencia MIT + EULA
+├── qntDrones.png                       # Logo QNT Drones (portada del informe)
 │
 ├── tsdk-core/                          # Núcleo del SDK
 │   ├── api/
@@ -680,12 +718,12 @@ dji_thermal_sdk_v1.8_20250829/
 │   └── html/, latex/, rtf/
 │
 └── thermal_inspector/                  # ★ APLICACIÓN PYTHON ★
-    ├── main.py                         # Punto de entrada
+    ├── main.py                         # Punto de entrada + anotación de imagen
     ├── file_parser.py                  # Parser de nombres DJI
     ├── extractor.py                    # Wrapper de dji_irp
     ├── analyzer.py                     # Análisis de ROIs
     ├── roi_tool.py                     # Selector gráfico de ROI
-    ├── reporter.py                     # Generador de PDF
+    ├── reporter.py                     # Generador de PDF (con logo + gráficos)
     ├── requirements.txt                # Dependencias Python
     ├── DOCUMENTACION.md                # ← Este archivo
     ├── cache/                          # Archivos .raw intermedios
@@ -723,7 +761,9 @@ dji_thermal_sdk_v1.8_20250829/
 
 3. **`roi_tool.py`**: Agregar modo SPOT con tecla `s`, commit con un solo click.
 
-4. **`reporter.py`**: Incluir datos de spots en la tabla de mediciones.
+4. **`main.py`**: Agregar el nuevo tipo a `_annotate_image()`.
+
+5. **`reporter.py`**: Incluir datos de spots en la tabla de mediciones.
 
 ### 9.2 Cambiar el formato de nombre de archivos
 
@@ -797,7 +837,18 @@ data_rows.append([
 
 Y en `main.py`, `collect_entry_inputs()`, agregar el prompt correspondiente.
 
-### 9.7 Usar la API C directamente con ctypes (alternativa a subprocess)
+### 9.7 Cambiar el logo de la portada
+
+Reemplazar `qntDrones.png` en la raíz del SDK, o pasar una ruta diferente al
+constructor de `ThermalReport`:
+
+```python
+report = ThermalReport(pdf_path, meta, logo_path="/ruta/a/mi_logo.png")
+```
+
+El logo se escala automáticamente a un máximo de 5.5 cm manteniendo proporción.
+
+### 9.8 Usar la API C directamente con ctypes (alternativa a subprocess)
 
 Si querés evitar el overhead de `subprocess` y el parseo de stdout:
 
@@ -939,7 +990,7 @@ ssh -X usuario@servidor
 
 Ajustar `img_h` en `reporter.py`, método `_entry_pages()`:
 ```python
-img_h = 7.5 * cm  # Aumentar si las imágenes son muy altas
+img_h = 7.0 * cm  # Valor actual; aumentar si las imágenes son muy altas
 ```
 
 ### Imágenes no se emparejan (thermal + visual)
@@ -951,9 +1002,20 @@ DJI_YYYYMMDDHHMMSS_NNNN_V_NOMBRE.jpeg   ← visual
 ```
 El `NNNN` (secuencia) y `NOMBRE` deben coincidir exactamente entre el par T/V.
 
+### El logo no aparece en la portada
+
+Verificar que `qntDrones.png` existe en la raíz del SDK (un nivel arriba de
+`thermal_inspector/`). El sistema lo busca automáticamente en esa ubicación.
+
+### Las ROIs no aparecen en la imagen del PDF
+
+Las marcas de ROI se dibujan con `_annotate_image()` en `main.py`. Verificar que:
+- Se definieron líneas o cajas en la herramienta de ROI
+- La función no arrojó errores (revisar la salida de consola)
+
 ### Error de memoria con imágenes muy grandes
 
 Las imágenes térmicas DJI suelen ser 640×512 (VGA) o similares. Si procesás
 ortomosaicos grandes, considerá:
-- Reducir `n_samples` en `_sample_line()` (default: 200)
+- Pasar un valor fijo a `n_samples` en `_sample_line()` para limitar las muestras
 - Procesar por lotes más pequeños

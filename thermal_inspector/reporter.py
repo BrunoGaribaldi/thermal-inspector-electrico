@@ -88,6 +88,72 @@ def _make_profile_chart(line_stats: list, box_stats: list, spot_stats: list) -> 
     return buf
 
 
+def _make_endpoints_chart(line_stats: list) -> BytesIO | None:
+    """Chart showing temperatures at the start (A) and end (B) points of each line."""
+    valid = [ls for ls in line_stats if ls.get('samples')]
+    if not valid:
+        return None
+
+    from matplotlib.lines import Line2D
+
+    fig, ax = plt.subplots(figsize=(5, 2.4))
+    fig.patch.set_facecolor('white')
+    ax.set_facecolor('white')
+
+    labels = []
+    for i, line in enumerate(valid):
+        color = _LINE_COLORS_MPL[i % len(_LINE_COLORS_MPL)]
+        t_a = line['t_start']
+        t_b = line['t_end']
+
+        ax.scatter(i - 0.13, t_a, color=color, marker='o', s=70, zorder=5, edgecolors='white', linewidths=0.5)
+        ax.scatter(i + 0.13, t_b, color=color, marker='s', s=70, zorder=5, edgecolors='white', linewidths=0.5)
+
+        ax.plot([i - 0.13, i + 0.13], [t_a, t_b], color=color, linewidth=1.2, alpha=0.35)
+
+        va_a = 'bottom' if t_a <= t_b else 'top'
+        va_b = 'bottom' if t_b >= t_a else 'top'
+        off_a = 7 if va_a == 'bottom' else -7
+        off_b = 7 if va_b == 'bottom' else -7
+
+        ax.annotate(f"{t_a:.1f}°C", (i - 0.13, t_a), textcoords="offset points",
+                    xytext=(0, off_a), ha='center', va=va_a, fontsize=7, color=color, fontweight='bold')
+        ax.annotate(f"{t_b:.1f}°C", (i + 0.13, t_b), textcoords="offset points",
+                    xytext=(0, off_b), ha='center', va=va_b, fontsize=7, color=color, fontweight='bold')
+
+        labels.append(line['label'])
+
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, fontsize=8, fontweight='bold')
+    ax.set_ylabel("°C", fontsize=8)
+    ax.tick_params(axis='y', labelsize=7)
+    ax.grid(axis="y", linestyle=":", alpha=0.45, color='grey')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['bottom'].set_color('#CCCCCC')
+    ax.spines['left'].set_color('#CCCCCC')
+
+    margin = 0.5
+    ax.set_xlim(-0.5, len(labels) - 0.5)
+    y_min, y_max = ax.get_ylim()
+    ax.set_ylim(y_min - margin, y_max + margin)
+
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='grey', markerfacecolor='grey',
+               markersize=6, label='Punto A (inicio)', linestyle='None'),
+        Line2D([0], [0], marker='s', color='grey', markerfacecolor='grey',
+               markersize=6, label='Punto B (fin)', linestyle='None'),
+    ]
+    ax.legend(handles=legend_elements, fontsize=7, loc='upper right', framealpha=0.8)
+
+    fig.tight_layout(pad=0.3)
+    buf = BytesIO()
+    fig.savefig(buf, format="png", dpi=130, bbox_inches="tight", facecolor='white')
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
 class ThermalReport:
     def __init__(self, output_path: str, meta: dict, logo_path: str = None):
         self._path = output_path
@@ -376,7 +442,7 @@ class ThermalReport:
             data_style.append(("BACKGROUND", (1, 3), (1, 3), GREEN_OK))
         data_t.setStyle(TableStyle(data_style))
 
-        # Chart
+        # Profile chart
         chart_img = ""
         chart_buf = _make_profile_chart(
             entry.get("line_stats", []),
@@ -385,8 +451,17 @@ class ThermalReport:
         if chart_buf:
             chart_img = RLImage(chart_buf)
             chart_img.drawWidth = half_w - 8
-            chart_img.drawHeight = 5.5 * cm
+            chart_img.drawHeight = 4.8 * cm
             chart_img.hAlign = 'CENTER'
+
+        # Endpoints chart (A/B temperatures)
+        endpts_img = ""
+        endpts_buf = _make_endpoints_chart(entry.get("line_stats", []))
+        if endpts_buf:
+            endpts_img = RLImage(endpts_buf)
+            endpts_img.drawWidth = half_w - 8
+            endpts_img.drawHeight = 3.5 * cm
+            endpts_img.hAlign = 'CENTER'
 
         # Stats table
         scw = half_w / 4.0
@@ -421,7 +496,14 @@ class ThermalReport:
         stats_t = Table(stats_rows, colWidths=[scw] * 4)
         stats_t.setStyle(TableStyle(stats_style))
 
-        right_q = Table([[chart_img], [stats_t]], colWidths=[half_w])
+        right_rows = []
+        if chart_img:
+            right_rows.append([chart_img])
+        if endpts_img:
+            right_rows.append([endpts_img])
+        right_rows.append([stats_t])
+
+        right_q = Table(right_rows, colWidths=[half_w])
         right_q.setStyle(TableStyle([
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),

@@ -6,9 +6,7 @@ from dataclasses import dataclass
 from typing import List
 import numpy as np
 import matplotlib.pyplot as plt
-import pandas as pd
 from io import BytesIO
-from matplotlib import colors as mcolors
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -38,9 +36,14 @@ class BoxROI:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _sample_line(temp_array: np.ndarray, p1: tuple, p2: tuple,
-                 n_samples: int = 200) -> np.ndarray:
-    """Return temperature values sampled along a line segment."""
+                 n_samples: int | None = None) -> np.ndarray:
+    """Return temperature values sampled along a line segment.
+    If n_samples is None, samples every pixel along the line length."""
     h, w = temp_array.shape
+    if n_samples is None:
+        dx = abs(p2[0] - p1[0])
+        dy = abs(p2[1] - p1[1])
+        n_samples = max(int(np.hypot(dx, dy)), 2)
     xs = np.linspace(p1[0], p2[0], n_samples).astype(int).clip(0, w - 1)
     ys = np.linspace(p1[1], p2[1], n_samples).astype(int).clip(0, h - 1)
     return temp_array[ys, xs]
@@ -105,6 +108,8 @@ def run_full_analysis(temp_array: np.ndarray,
             "t_max": float(samples.max()),
             "t_min": float(samples.min()),
             "t_mean": float(samples.mean()),
+            "t_start": float(samples[0]),
+            "t_end": float(samples[-1]),
             "n": int(samples.size),
             "samples": samples.tolist(),
         })
@@ -158,6 +163,7 @@ class StatisticalAnalyzer:
 
     def generate_pie_chart(self, results_data=None):
         """Generates a clean pie chart and returns raw BytesIO image."""
+        import pandas as pd  # noqa: F401 — only needed for this legacy helper
         category_counts = self.df['visual_category'].value_counts()
         labels = category_counts.index.tolist()
         sizes = category_counts.values.tolist()
