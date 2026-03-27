@@ -465,8 +465,14 @@ class ThermalReport:
             ])
         data_rows.append([Paragraph("Spots", self._styles["DataKey"]),
                           Paragraph("-", self._styles["DataValue"])])
-        data_rows.append([Paragraph("Deltas", self._styles["DataKey"]),
-                          Paragraph("-", self._styles["DataValue"])])
+
+        delta_ab_parts = []
+        for ls in entry.get("line_stats", []):
+            dt = abs(ls.get("t_end", 0) - ls.get("t_start", 0))
+            delta_ab_parts.append(f"{ls['label']}: {dt:.2f} °C")
+        delta_ab_text = ", ".join(delta_ab_parts) if delta_ab_parts else "-"
+        data_rows.append([Paragraph("Deltas (A→B)", self._styles["DataKey"]),
+                          Paragraph(delta_ab_text, self._styles["DataValue"])])
 
         data_t = Table(data_rows, colWidths=[half_w * 0.42, half_w * 0.58])
         data_style = [
@@ -537,12 +543,53 @@ class ThermalReport:
         stats_t = Table(stats_rows, colWidths=[scw] * 4)
         stats_t.setStyle(TableStyle(stats_style))
 
+        # Delta T table (A→B per line)
+        delta_t_table = ""
+        valid_lines = [ls for ls in entry.get("line_stats", [])
+                       if ls.get("t_start") is not None and ls.get("t_end") is not None]
+        if valid_lines:
+            dcw = half_w / 4.0
+            dt_rows = [[
+                Paragraph("<b>Label</b>", self._styles["DataValueCenter"]),
+                Paragraph("<b>Punto A</b>", self._styles["DataValueCenter"]),
+                Paragraph("<b>Punto B</b>", self._styles["DataValueCenter"]),
+                Paragraph("<b>ΔT (A→B)</b>", self._styles["DataValueCenter"]),
+            ]]
+            dt_style_cmds = [
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("GRID", (0, 0), (-1, -1), 0.3, colors.lightgrey),
+                ("BACKGROUND", (0, 0), (-1, 0), BLUE_LIGHT),
+                ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ]
+            for i, ls in enumerate(valid_lines):
+                rl_c = _LINE_COLORS_RL[i % len(_LINE_COLORS_RL)]
+                lbl_s = ParagraphStyle(f"_dt{idx}_{i}", fontSize=8, textColor=rl_c,
+                                       fontName="Helvetica-Bold", alignment=1)
+                t_a = ls["t_start"]
+                t_b = ls["t_end"]
+                delta = abs(t_b - t_a)
+                dt_rows.append([
+                    Paragraph(ls["label"], lbl_s),
+                    Paragraph(f"{t_a:.2f} °C", self._styles["DataValueCenter"]),
+                    Paragraph(f"{t_b:.2f} °C", self._styles["DataValueCenter"]),
+                    Paragraph(f"{delta:.2f} °C", self._styles["DataValueCenter"]),
+                ])
+            delta_t_table = Table(dt_rows, colWidths=[dcw] * 4)
+            delta_t_table.setStyle(TableStyle(dt_style_cmds))
+
         right_rows = []
         if chart_img:
             right_rows.append([chart_img])
         if endpts_img:
             right_rows.append([endpts_img])
         right_rows.append([stats_t])
+        if delta_t_table:
+            right_rows.append([delta_t_table])
 
         right_q = Table(right_rows, colWidths=[half_w])
         right_q.setStyle(TableStyle([
