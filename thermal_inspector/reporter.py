@@ -417,6 +417,126 @@ class ThermalReport:
             ]))
             elements.append(gps_body)
 
+        # ── Row 2c: Image Info + Measurement Params ──────────────────
+        image_meta = entry.get("image_metadata", {})
+        meas_params = entry.get("measurement_params", {})
+        has_meta = bool(image_meta) or bool(meas_params)
+
+        if has_meta:
+            info_header = Table(
+                [[Paragraph("INFORMACIÓN DE IMAGEN", self._styles["HeaderWhiteCenter"]),
+                  Paragraph("PARÁMETROS DE MEDICIÓN", self._styles["HeaderWhiteCenter"])]],
+                colWidths=[half_w, half_w])
+            info_header.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), BLUE_DARK),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]))
+            elements.append(info_header)
+
+            small_key = ParagraphStyle("_SmKey", fontSize=8,
+                                       fontName="Helvetica-Bold",
+                                       textColor=colors.black)
+            small_val = ParagraphStyle("_SmVal", fontSize=8,
+                                       fontName="Helvetica",
+                                       textColor=colors.black)
+
+            left_rows = []
+            model_name = (image_meta.get("drone_model")
+                          or image_meta.get("model", ""))
+            if model_name:
+                left_rows.append([Paragraph("Modelo", small_key),
+                                  Paragraph(model_name, small_val)])
+            sn = (image_meta.get("serial_number")
+                  or image_meta.get("camera_serial", ""))
+            if sn:
+                left_rows.append([Paragraph("N° Serie", small_key),
+                                  Paragraph(sn, small_val)])
+            fl = image_meta.get("focal_length")
+            if fl is not None:
+                left_rows.append([Paragraph("Focal Length", small_key),
+                                  Paragraph(f"{fl} mm", small_val)])
+            fn = image_meta.get("fnumber")
+            if fn is not None:
+                left_rows.append([Paragraph("F-Number", small_key),
+                                  Paragraph(f"f/{fn}", small_val)])
+            iw = image_meta.get("width")
+            ih = image_meta.get("height")
+            if iw and ih:
+                left_rows.append([Paragraph("Resolución", small_key),
+                                  Paragraph(f"{iw} × {ih}", small_val)])
+            dto = image_meta.get("datetime_original")
+            if dto:
+                left_rows.append([Paragraph("Fecha captura", small_key),
+                                  Paragraph(str(dto), small_val)])
+            coords = image_meta.get("coordinates")
+            if coords and not gps_coord:
+                left_rows.append([Paragraph("Coordenadas", small_key),
+                                  Paragraph(coords, small_val)])
+
+            if not left_rows:
+                left_rows.append([Paragraph("—", small_val),
+                                  Paragraph("Sin metadatos disponibles",
+                                            small_val)])
+
+            right_rows = []
+            if meas_params:
+                right_rows.append([
+                    Paragraph("Emisividad", small_key),
+                    Paragraph(str(meas_params.get("emissivity", "N/A")),
+                              small_val)])
+                right_rows.append([
+                    Paragraph("Distancia", small_key),
+                    Paragraph(f"{meas_params.get('distance', 'N/A')} m",
+                              small_val)])
+                right_rows.append([
+                    Paragraph("Humedad", small_key),
+                    Paragraph(f"{meas_params.get('humidity', 'N/A')} %",
+                              small_val)])
+                right_rows.append([
+                    Paragraph("Temp. ambiente", small_key),
+                    Paragraph(f"{meas_params.get('ambient', 'N/A')} °C",
+                              small_val)])
+
+            max_rows = max(len(left_rows), len(right_rows))
+            while len(left_rows) < max_rows:
+                left_rows.append(["", ""])
+            while len(right_rows) < max_rows:
+                right_rows.append(["", ""])
+
+            left_cw = [half_w * 0.38, half_w * 0.62]
+            right_cw = [half_w * 0.42, half_w * 0.58]
+
+            left_t = Table(left_rows, colWidths=left_cw)
+            left_t.setStyle(TableStyle([
+                ("GRID", (0, 0), (-1, -1), 0.3, colors.lightgrey),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ]))
+
+            right_t = Table(right_rows, colWidths=right_cw)
+            right_t.setStyle(TableStyle([
+                ("GRID", (0, 0), (-1, -1), 0.3, colors.lightgrey),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ]))
+
+            info_body = Table([[left_t, right_t]],
+                              colWidths=[half_w, half_w])
+            info_body.setStyle(TableStyle([
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+            ] + _ZERO_PAD))
+            elements.append(info_body)
+
         # ── Row 3: data headers ───────────────────────────────────────
         h2_table = Table(
             [[Paragraph("TABLA DE DATOS", self._styles["HeaderWhiteCenter"]),

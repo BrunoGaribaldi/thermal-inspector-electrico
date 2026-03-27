@@ -94,13 +94,17 @@ analyzer.py ─────── Calcula estadísticas por ROI
   │                  └── Clasificación: Normal/Leve/Moderado/Serio/Crítico
   ▼
 main.py ─────────── Anota la imagen con ROIs (líneas + cajas dibujadas)
+  │                  Genera escala térmica vertical junto al termograma
+  │                  Extrae metadatos EXIF/XMP de la imagen R-JPEG
   │                  Solicita datos textuales al usuario
   ▼
 reporter.py ─────── Genera PDF con ReportLab
                      ├── Portada con logo QNT Drones + datos del informe
                      ├── Índice de termogramas
                      └── Una página por termograma:
-                         ├── Imagen pseudocolor (con ROIs marcados) + imagen visual
+                         ├── Termograma (con ROIs + escala térmica) + imagen visual
+                         ├── Ubicación GPS (si disponible)
+                         ├── Información de imagen + parámetros de medición
                          ├── Tabla de datos + gráfico de perfil térmico
                          ├── Gráfico de temperaturas en puntos A/B
                          ├── Tabla de estadísticas por línea
@@ -269,12 +273,27 @@ Orquesta todo el flujo. Funciones principales:
 **`_annotate_image(color_rgb, lines, boxes) → ndarray`**
 
 Dibuja sobre una copia de la imagen pseudocolor:
-- **Líneas**: con los mismos colores que los gráficos (rojo, verde, azul, naranja, púrpura), incluyendo
-  puntos en los extremos y etiquetas (`Li1`, `Li2`...).
+- **Líneas**: con los mismos colores que los gráficos (rojo, verde, azul, naranja, púrpura), con
+  marcadores tipo **crosshair/retícula** vacíos en los extremos (círculo + cruz) y etiquetas (`Li1`, `Li2`...).
+  Los marcadores son huecos para permitir ver el interior del punto marcado.
 - **Cajas**: en amarillo con etiquetas (`Bx1`, `Bx2`...).
 - Usa fuente DejaVu Bold 14px (con fallback a fuente default).
 
-La imagen anotada es la que aparece en el termograma del PDF.
+La imagen anotada se combina luego con una **escala térmica vertical** que muestra
+el gradiente de colores y las temperaturas mínima, media y máxima.
+
+**`_make_thermal_scale_bar(temp_array, color_rgb) → ndarray | None`**
+
+Genera una barra de escala de color vertical que mapea exactamente los colores del
+pseudocolor DJI a sus temperaturas correspondientes. La barra muestra etiquetas con
+la temperatura máxima (arriba), media (centro) y mínima (abajo). Los colores se
+obtienen directamente de la imagen pseudocolor real, garantizando fidelidad con
+el termograma.
+
+**`_compose_with_scale_bar(annotated_rgb, temp_array, original_color_rgb) → ndarray`**
+
+Concatena horizontalmente la imagen térmica anotada con la barra de escala.
+El resultado es una imagen compuesta que se pasa al reporter como un solo bloque.
 
 **Logo:** `main.py` busca automáticamente `qntDrones.png` en la raíz del SDK
 (un nivel arriba de `thermal_inspector/`). Si lo encuentra, lo pasa al reporte.
@@ -385,6 +404,28 @@ Retorna:
 | `distance` | 5.0 m | 1–1000 m | Distancia cámara-objetivo (compensa absorción atmosférica) |
 | `humidity` | 70.0% | 20–100% | Humedad relativa (afecta absorción atmosférica) |
 | `ambient` | 25.0°C | -40–80°C | Temperatura ambiente (compensación de fondo) |
+
+> **Nota:** Estos valores por defecto se usan cuando no se proporcionan por CLI.
+> Se muestran en el PDF en la sección "Parámetros de medición" de cada termograma.
+
+**`extract_image_metadata(image_path) → dict`**
+
+Extrae metadatos EXIF y XMP de una imagen R-JPEG DJI. Campos disponibles:
+
+| Campo | Fuente | Descripción |
+|-------|--------|-------------|
+| `model` | EXIF tag 272 | Modelo de cámara |
+| `drone_model` | XMP `drone-dji:Model` | Nombre del dron (ej: "M4TD") |
+| `serial_number` | XMP `drone-dji:SerialNumber` | N° serie del dron |
+| `camera_serial` | XMP `drone-dji:CameraSN` | N° serie de la cámara |
+| `focal_length` | EXIF tag 37386 | Distancia focal en mm |
+| `fnumber` | EXIF tag 33437 | Número f (apertura) |
+| `width` / `height` | EXIF / Pillow | Resolución de la imagen |
+| `datetime_original` | EXIF tag 36867 | Fecha/hora de captura |
+| `coordinates` | EXIF GPS IFD | Coordenadas GPS (lat, lon) |
+| `relative_altitude` | XMP `drone-dji:RelativeAltitude` | Altitud relativa |
+
+Los campos no disponibles en una imagen particular simplemente se omiten del dict.
 
 > **Para modificar:** Si usás Linux x86 o Windows, cambiá `BIN_DIR` para que apunte
 > al directorio correcto (`linux/release_x86`, `windows/release_x64`, etc.).
@@ -576,7 +617,14 @@ Páginas 3+: Un termograma por página
   │    TERMOGRAMA      │   IMAGEN VISUAL    │  ← encabezados azules
   ├────────────────────┼────────────────────┤
   │  (pseudocolor con  │  (foto RGB)        │  ← imágenes
-  │   ROIs marcados)   │                    │
+  │   ROIs + escala)   │                    │
+  ├────────────────────┴────────────────────┤
+  │  UBICACIÓN GPS (si disponible)          │
+  ├────────────────────┬────────────────────┤
+  │  INFO DE IMAGEN    │ PARÁMETROS MEDIC.  │  ← metadatos + params
+  │  Modelo: M4TD      │ Emisividad: 0.95   │
+  │  Focal: 12mm f/1.0 │ Distancia: 5.0 m   │
+  │  Resolución: 640×512│ Humedad: 70.0%    │
   ├────────────────────┼────────────────────┤
   │   TABLA DE DATOS   │  PERFIL TÉRMICO    │  ← encabezados azules
   ├────────────────────┼────────────────────┤

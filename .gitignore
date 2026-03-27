@@ -1,0 +1,7 @@
+.env
+thermal_inspector/.env
+thermal_inspector/cache/
+thermal_inspector/output/
+thermal_inspector/__pycache__/
+__pycache__/
+*.pyc

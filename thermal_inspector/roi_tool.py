@@ -195,12 +195,11 @@ class ROITool:
         cx, cy = event.x, event.y
         if self._anchor is None:
             self._anchor = (cx, cy)
-            # Draw anchor dot
+            r = self._DOT_RADIUS
+            color = self._LINE_COLOR_TK if self._mode == _Mode.LINE else self._BOX_COLOR_TK
             self._canvas.create_oval(
-                cx - self._DOT_RADIUS, cy - self._DOT_RADIUS,
-                cx + self._DOT_RADIUS, cy + self._DOT_RADIUS,
-                fill=self._LINE_COLOR_TK if self._mode == _Mode.LINE else self._BOX_COLOR_TK,
-                outline="", tags="roi_preview_dot",
+                cx - r, cy - r, cx + r, cy + r,
+                outline=color, width=2, tags="roi_preview_dot",
             )
         else:
             # Second click → commit
@@ -279,11 +278,11 @@ class ROITool:
 
         self._canvas.create_line(cx1, cy1, cx2, cy2,
                                   fill=color_tk, width=2, tags="roi")
+        r = self._DOT_RADIUS
         for cx, cy in [(cx1, cy1), (cx2, cy2)]:
             self._canvas.create_oval(
-                cx - self._DOT_RADIUS, cy - self._DOT_RADIUS,
-                cx + self._DOT_RADIUS, cy + self._DOT_RADIUS,
-                fill=color_tk, outline="", tags="roi",
+                cx - r, cy - r, cx + r, cy + r,
+                outline=color_tk, width=2, tags="roi",
             )
         # Label at start point
         self._canvas.create_text(

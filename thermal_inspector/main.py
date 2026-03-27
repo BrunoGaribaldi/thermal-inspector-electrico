@@ -30,18 +30,19 @@ from pathlib import Path
 # Add this folder to path so imports work
 sys.path.insert(0, str(Path(__file__).parent))
 
-# Load .env file if present
-_env_path = Path(__file__).parent / ".env"
-if _env_path.is_file():
-    with open(_env_path) as _f:
-        for _line in _f:
-            _line = _line.strip()
-            if _line and not _line.startswith("#") and "=" in _line:
-                _k, _v = _line.split("=", 1)
-                os.environ.setdefault(_k.strip(), _v.strip())
+# Load .env file if present (check thermal_inspector/ and project root)
+for _env_candidate in [Path(__file__).parent / ".env",
+                       Path(__file__).parent.parent / ".env"]:
+    if _env_candidate.is_file():
+        with open(_env_candidate) as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if _line and not _line.startswith("#") and "=" in _line:
+                    _k, _v = _line.split("=", 1)
+                    os.environ.setdefault(_k.strip(), _v.strip())
 
 from file_parser import find_image_pairs
-from extractor import extract_temperature, extract_pseudocolor, get_cache_dir
+from extractor import extract_temperature, extract_pseudocolor, get_cache_dir, extract_image_metadata
 from analyzer import LineROI, BoxROI, run_full_analysis
 from roi_tool import ROITool
 from reporter import ThermalReport
@@ -53,6 +54,101 @@ _LINE_COLORS_PIL = [
 _BOX_COLOR_PIL = (255, 220, 0)
 
 _POLE_NUM_RE = re.compile(r"[Pp]oste\s*(\d+)")
+
+
+def _make_horizontal_scale_bar(temp_array, color_rgb, target_width=None):
+    """Build a horizontal color scale bar placed below the thermogram."""
+    from PIL import Image as PILImage, ImageDraw, ImageFont
+    import numpy as np
+
+    h_img, w_img = temp_array.shape
+    t_min = float(temp_array.min())
+    t_max = float(temp_array.max())
+
+    if t_max - t_min < 0.1:
+        return None
+
+    if target_width is None:
+        target_width = w_img
+
+    flat_t = temp_array.ravel()
+    flat_c = color_rgb.reshape(-1, 3)
+
+    n_bins = 256
+    bin_temps = np.linspace(t_min, t_max, n_bins)
+    bin_colors = np.zeros((n_bins, 3), dtype=np.float64)
+
+    indices = np.digitize(flat_t, bin_temps) - 1
+    indices = np.clip(indices, 0, n_bins - 1)
+
+    for i in range(n_bins):
+        mask = indices == i
+        if mask.any():
+            bin_colors[i] = flat_c[mask].mean(axis=0)
+
+    for i in range(1, n_bins):
+        if bin_colors[i].sum() == 0:
+            bin_colors[i] = bin_colors[i - 1]
+    for i in range(n_bins - 2, -1, -1):
+        if bin_colors[i].sum() == 0:
+            bin_colors[i] = bin_colors[i + 1]
+
+    bin_colors = bin_colors.astype(np.uint8)
+
+    bar_h = 14
+    label_h = 16
+    margin_x = 6
+    total_h = bar_h + label_h + 4
+    grad_w = target_width - 2 * margin_x
+
+    img = np.full((total_h, target_width, 3), 30, dtype=np.uint8)
+
+    for x in range(grad_w):
+        frac = x / max(grad_w - 1, 1)
+        idx = int(frac * (n_bins - 1))
+        idx = max(0, min(n_bins - 1, idx))
+        img[2:2 + bar_h, margin_x + x] = bin_colors[idx]
+
+    pil_img = PILImage.fromarray(img)
+    draw = ImageDraw.Draw(pil_img)
+
+    draw.rectangle(
+        [margin_x - 1, 1, margin_x + grad_w, 2 + bar_h],
+        outline=(150, 150, 150), width=1,
+    )
+
+    try:
+        font = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 10)
+    except Exception:
+        try:
+            font = ImageFont.load_default(size=10)
+        except TypeError:
+            font = ImageFont.load_default()
+
+    ty = 2 + bar_h + 2
+    draw.text((margin_x, ty), f"{t_min:.1f}°C",
+              fill=(255, 255, 255), font=font)
+    t_mid = (t_max + t_min) / 2
+    mid_x = margin_x + grad_w // 2
+    draw.text((mid_x - 15, ty), f"{t_mid:.1f}°C",
+              fill=(200, 200, 200), font=font)
+    draw.text((margin_x + grad_w - 48, ty), f"{t_max:.1f}°C",
+              fill=(255, 255, 255), font=font)
+
+    return np.array(pil_img)
+
+
+def _compose_with_scale_bar(annotated_rgb, temp_array, original_color_rgb):
+    """Combine annotated thermogram with a horizontal scale bar below it."""
+    import numpy as np
+
+    scale_bar = _make_horizontal_scale_bar(
+        temp_array, original_color_rgb, target_width=annotated_rgb.shape[1])
+    if scale_bar is None:
+        return annotated_rgb
+
+    return np.concatenate([annotated_rgb, scale_bar], axis=0)
 
 
 def _load_pole_coords(csv_path: str) -> dict:
@@ -103,9 +199,10 @@ def _annotate_image(color_rgb, lines, boxes):
     for i, line in enumerate(lines):
         c = _LINE_COLORS_PIL[i % len(_LINE_COLORS_PIL)]
         draw.line([line.p1, line.p2], fill=c, width=2)
-        r = 4
+        r = 6
         for pt in [line.p1, line.p2]:
-            draw.ellipse([pt[0] - r, pt[1] - r, pt[0] + r, pt[1] + r], fill=c)
+            draw.ellipse([pt[0] - r, pt[1] - r, pt[0] + r, pt[1] + r],
+                         outline=c, width=2)
         draw.text((line.p1[0] + 6, line.p1[1] - 16), line.label, fill=c, font=font)
 
     for box in boxes:
@@ -211,6 +308,23 @@ def process_image(pair: dict, args, cache_base: str,
         print("  Imagen visual:  (no encontrada)")
     print(f"{'='*55}")
 
+    # 0. Extract image metadata (EXIF/XMP)
+    print("  [0/4] Leyendo metadatos de la imagen...")
+    image_metadata = extract_image_metadata(thermal_path)
+    if image_metadata:
+        model_name = image_metadata.get("drone_model") or image_metadata.get("model", "")
+        if model_name:
+            print(f"        Modelo: {model_name}")
+        fl = image_metadata.get("focal_length")
+        fn = image_metadata.get("fnumber")
+        if fl or fn:
+            parts = []
+            if fl:
+                parts.append(f"{fl} mm")
+            if fn:
+                parts.append(f"f/{fn}")
+            print(f"        Óptica: {', '.join(parts)}")
+
     # 1. Extract temperature array
     print("  [1/4] Extrayendo datos de temperatura...")
     cache_dir = get_cache_dir(thermal_path, cache_base)
@@ -255,6 +369,11 @@ def process_image(pair: dict, args, cache_base: str,
         print(f"        Imagen térmica anotada con {len(lines)} línea(s) y {len(boxes)} caja(s)")
     else:
         color_rgb_annotated = color_rgb
+
+    # 5b. Add thermal scale bar
+    color_rgb_annotated = _compose_with_scale_bar(
+        color_rgb_annotated, temp_array, color_rgb)
+    print(f"        Escala térmica añadida al termograma")
 
     # 6. AI diagnosis via Gemini
     diagnostico_ia = ""
@@ -303,6 +422,13 @@ def process_image(pair: dict, args, cache_base: str,
         "gps_coord": gps_coord,
         "gps_url": gps_url,
         "diagnostico_ia": diagnostico_ia,
+        "image_metadata": image_metadata,
+        "measurement_params": {
+            "emissivity": args.emissivity,
+            "distance": args.distance,
+            "humidity": args.humidity,
+            "ambient": args.ambient,
+        },
     }
 
     return entry

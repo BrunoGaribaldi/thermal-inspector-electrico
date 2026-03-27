@@ -1,6 +1,7 @@
 """
 extractor.py — DJI Thermal SDK wrapper.
 Calls dji_irp via subprocess to extract temperature arrays and pseudocolor images.
+Also extracts EXIF/XMP metadata from DJI R-JPEG files.
 """
 
 import os
@@ -8,6 +9,7 @@ import re
 import subprocess
 import numpy as np
 from pathlib import Path
+from PIL import Image as PILImage
 
 # SDK binary directory (one level up from this file → sdk root → utility/bin)
 _THIS_DIR = Path(__file__).parent
@@ -114,3 +116,116 @@ def extract_pseudocolor(
 
     arr = np.fromfile(raw_path, dtype=np.uint8).reshape(h, w, 3)
     return arr, w, h
+
+
+# ── EXIF / XMP metadata extraction ──────────────────────────────────────────
+
+def _parse_gps_coord(gps_data: tuple, ref: str) -> float | None:
+    """Convert EXIF GPS tuple ((deg, min, sec), ref) to decimal degrees."""
+    try:
+        d = float(gps_data[0])
+        m = float(gps_data[1])
+        s = float(gps_data[2])
+        val = d + m / 60.0 + s / 3600.0
+        if ref in ("S", "W"):
+            val = -val
+        return val
+    except Exception:
+        return None
+
+
+def _extract_xmp_fields(image_path: str) -> dict:
+    """Extract DJI-specific fields from XMP metadata embedded in the JPEG."""
+    xmp = {}
+    try:
+        with open(image_path, "rb") as f:
+            data = f.read()
+        start = data.find(b"<x:xmpmeta")
+        end = data.find(b"</x:xmpmeta>")
+        if start < 0 or end < 0:
+            return xmp
+        xmp_str = data[start:end + len(b"</x:xmpmeta>")].decode("utf-8", errors="ignore")
+
+        patterns = {
+            "drone_model": r'drone-dji:Model(?:Name)?="([^"]*)"',
+            "serial_number": r'drone-dji:(?:Drone)?SerialNumber="([^"]*)"',
+            "camera_serial": r'drone-dji:CameraSN="([^"]*)"',
+            "gimbal_yaw": r'drone-dji:GimbalYawDegree="([^"]*)"',
+            "gimbal_pitch": r'drone-dji:GimbalPitchDegree="([^"]*)"',
+            "flight_yaw": r'drone-dji:FlightYawDegree="([^"]*)"',
+            "relative_altitude": r'drone-dji:RelativeAltitude="([^"]*)"',
+            "absolute_altitude": r'drone-dji:AbsoluteAltitude="([^"]*)"',
+        }
+        for key, pattern in patterns.items():
+            m = re.search(pattern, xmp_str)
+            if m:
+                xmp[key] = m.group(1)
+    except Exception:
+        pass
+    return xmp
+
+
+def extract_image_metadata(image_path: str) -> dict:
+    """Extract EXIF and XMP metadata from a DJI R-JPEG image.
+
+    Returns a dict with available fields (missing fields are omitted):
+        model, serial_number, focal_length, fnumber, width, height,
+        datetime_original, datetime_modified, coordinates, drone_model,
+        relative_altitude, absolute_altitude, ...
+    """
+    meta: dict = {}
+
+    try:
+        img = PILImage.open(image_path)
+        meta["width"] = img.width
+        meta["height"] = img.height
+
+        exif = img.getexif()
+        if exif:
+            if 271 in exif:
+                meta["make"] = str(exif[271])
+            if 272 in exif:
+                meta["model"] = str(exif[272])
+            if 306 in exif:
+                meta["datetime_modified"] = str(exif[306])
+
+            exif_ifd = exif.get_ifd(0x8769)
+            if exif_ifd:
+                if 33437 in exif_ifd:
+                    meta["fnumber"] = float(exif_ifd[33437])
+                if 37386 in exif_ifd:
+                    meta["focal_length"] = float(exif_ifd[37386])
+                if 36867 in exif_ifd:
+                    meta["datetime_original"] = str(exif_ifd[36867])
+                if 36868 in exif_ifd:
+                    meta["datetime_digitized"] = str(exif_ifd[36868])
+
+            gps_ifd = exif.get_ifd(0x8825)
+            if gps_ifd:
+                lat = gps_ifd.get(2)
+                lat_ref = gps_ifd.get(1, "N")
+                lon = gps_ifd.get(4)
+                lon_ref = gps_ifd.get(3, "E")
+                if lat and lon:
+                    lat_val = _parse_gps_coord(lat, lat_ref)
+                    lon_val = _parse_gps_coord(lon, lon_ref)
+                    if lat_val is not None and lon_val is not None:
+                        meta["coordinates"] = f"{lat_val:.6f}, {lon_val:.6f}"
+
+        img.close()
+    except Exception as e:
+        print(f"  ADVERTENCIA: Error leyendo EXIF: {e}")
+
+    xmp = _extract_xmp_fields(image_path)
+    if xmp.get("drone_model"):
+        meta["drone_model"] = xmp["drone_model"]
+    if xmp.get("serial_number"):
+        meta["serial_number"] = xmp["serial_number"]
+    if xmp.get("camera_serial"):
+        meta["camera_serial"] = xmp["camera_serial"]
+    if xmp.get("relative_altitude"):
+        meta["relative_altitude"] = xmp["relative_altitude"]
+    if xmp.get("absolute_altitude"):
+        meta["absolute_altitude"] = xmp["absolute_altitude"]
+
+    return meta
