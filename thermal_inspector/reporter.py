@@ -376,6 +376,47 @@ class ThermalReport:
         ]))
         elements.append(img_tbl)
 
+        # ── Row 2b: GPS location ──────────────────────────────────────
+        gps_coord = entry.get("gps_coord", "")
+        gps_url = entry.get("gps_url", "")
+        if gps_coord:
+            gps_header = Table(
+                [[Paragraph("UBICACIÓN GPS", self._styles["HeaderWhiteCenter"])]],
+                colWidths=[tw])
+            gps_header.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), BLUE_DARK),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]))
+            elements.append(gps_header)
+
+            link_style = ParagraphStyle(
+                "GPSLink", fontSize=9, textColor=colors.HexColor("#2471A3"),
+                fontName="Helvetica")
+            if gps_url:
+                gps_text = (
+                    f'<b>Coordenadas:</b> {gps_coord} &nbsp;&nbsp;|&nbsp;&nbsp; '
+                    f'<a href="{gps_url}" color="#2471A3">'
+                    f'<u>Ver en Google Maps</u></a>'
+                )
+            else:
+                gps_text = f'<b>Coordenadas:</b> {gps_coord}'
+
+            gps_body = Table(
+                [[Paragraph(gps_text, link_style)]],
+                colWidths=[tw])
+            gps_body.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), BLUE_LIGHT),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]))
+            elements.append(gps_body)
+
         # ── Row 3: data headers ───────────────────────────────────────
         h2_table = Table(
             [[Paragraph("TABLA DE DATOS", self._styles["HeaderWhiteCenter"]),

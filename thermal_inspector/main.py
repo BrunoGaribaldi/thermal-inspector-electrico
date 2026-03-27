@@ -19,7 +19,9 @@ Opciones:
 """
 
 import argparse
+import csv
 import os
+import re
 import sys
 import traceback
 from datetime import datetime
@@ -39,6 +41,37 @@ _LINE_COLORS_PIL = [
     (230, 126, 34), (142, 68, 173),
 ]
 _BOX_COLOR_PIL = (255, 220, 0)
+
+_POLE_NUM_RE = re.compile(r"[Pp]oste\s*(\d+)")
+
+
+def _load_pole_coords(csv_path: str) -> dict:
+    """Load pole coordinates from CSV. Returns {pole_number_str: coord_string}."""
+    coords = {}
+    if not os.path.isfile(csv_path):
+        return coords
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            pole_num = row.get("Poste", "").strip()
+            coord = row.get("Coord", "").strip()
+            if pole_num and coord:
+                coords[pole_num] = coord
+    return coords
+
+
+def _extract_pole_number(pole_name: str) -> str | None:
+    """Extract numeric pole ID from a name like 'Poste1' or 'Poste 12'."""
+    m = _POLE_NUM_RE.search(pole_name)
+    return m.group(1) if m else None
+
+
+def _make_google_maps_url(coord: str) -> str:
+    """Build a Google Maps URL from a coordinate string like '-36.959, -69.419'."""
+    parts = [p.strip() for p in coord.split(",")]
+    if len(parts) == 2:
+        return f"https://www.google.com/maps?q={parts[0]},{parts[1]}"
+    return ""
 
 
 def _annotate_image(color_rgb, lines, boxes):
@@ -153,7 +186,8 @@ def collect_entry_inputs(pole_name: str, ubicacion_general: str) -> dict:
     }
 
 
-def process_image(pair: dict, args, cache_base: str) -> dict:
+def process_image(pair: dict, args, cache_base: str,
+                   pole_coords: dict | None = None) -> dict:
     """Full pipeline for one thermal/RGB pair."""
     pole_name = pair["pole_name"]
     thermal_path = pair["thermal"].path
@@ -216,6 +250,17 @@ def process_image(pair: dict, args, cache_base: str) -> dict:
     # 6. Collect user text inputs
     user_data = collect_entry_inputs(pole_name, args.ubicacion)
 
+    # 7. Look up GPS coordinates for this pole
+    gps_coord = ""
+    gps_url = ""
+    pole_num = _extract_pole_number(pole_name)
+    if pole_num and pole_coords and pole_num in pole_coords:
+        gps_coord = pole_coords[pole_num]
+        gps_url = _make_google_maps_url(gps_coord)
+        print(f"        Coordenadas GPS: {gps_coord}")
+    elif pole_num:
+        print(f"        Coordenadas GPS: no encontradas para poste {pole_num}")
+
     entry = {
         **user_data,
         **analysis,
@@ -225,6 +270,8 @@ def process_image(pair: dict, args, cache_base: str) -> dict:
         "color_rgb": color_rgb_annotated,
         "temp_array": temp_array,
         "timestamp": pair["thermal"].timestamp,
+        "gps_coord": gps_coord,
+        "gps_url": gps_url,
     }
 
     return entry
@@ -263,6 +310,14 @@ def main():
         rgb_status = "✓ RGB" if p["rgb"] else "✗ sin RGB"
         print(f"  [{i}] {p['pole_name']} — {os.path.basename(p['thermal'].path)}  ({rgb_status})")
 
+    # Load pole coordinates from CSV
+    csv_path = str(script_dir / "pos_postes.csv")
+    pole_coords = _load_pole_coords(csv_path)
+    if pole_coords:
+        print(f"\nCoordenadas de postes cargadas: {len(pole_coords)} entradas")
+    else:
+        print(f"\nADVERTENCIA: No se encontraron coordenadas en {csv_path}")
+
     # Collect report metadata
     meta = collect_meta(args)
 
@@ -278,7 +333,7 @@ def main():
     for i, pair in enumerate(pairs, 1):
         print(f"\n[ Imagen {i}/{len(pairs)} ]")
         try:
-            entry = process_image(pair, args, str(cache_dir))
+            entry = process_image(pair, args, str(cache_dir), pole_coords)
             page = report.add_entry(entry)
             print(f"  Entrada agregada al informe (pág. {page})")
             processed += 1
