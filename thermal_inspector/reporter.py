@@ -604,21 +604,15 @@ class ThermalReport:
         ] + _ZERO_PAD))
         elements.append(mid_table)
 
-        # ── Row 5: text blocks ────────────────────────────────────────
+        # ── Row 5: diagnosis text block ───────────────────────────────
         text_rows = [
             [Paragraph("DIAGNÓSTICO", self._styles["DataKey"])],
             [Paragraph(entry.get("diagnostico_texto", ""), self._styles["DataValue"])],
-            [Paragraph("RECOMENDACIONES", self._styles["DataKey"])],
-            [Paragraph(entry.get("recomendaciones", ""), self._styles["DataValue"])],
-            [Paragraph("REPARACIONES REALIZADAS", self._styles["DataKey"])],
-            [Paragraph(entry.get("reparaciones", ""), self._styles["DataValue"])],
         ]
 
         text_t = Table(text_rows, colWidths=[tw])
         text_t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (0, 0), BLUE_LIGHT),
-            ("BACKGROUND", (0, 2), (0, 2), BLUE_LIGHT),
-            ("BACKGROUND", (0, 4), (0, 4), BLUE_LIGHT),
             ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
             ("LEFTPADDING", (0, 0), (-1, -1), 6),
             ("RIGHTPADDING", (0, 0), (-1, -1), 6),
@@ -626,6 +620,32 @@ class ThermalReport:
             ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ]))
         elements.append(text_t)
+
+        # ── Row 6: AI diagnosis ──────────────────────────────────────
+        diagnostico_ia = entry.get("diagnostico_ia", "")
+        if diagnostico_ia:
+            ia_header_text = (
+                'Análisis asistido por inteligencia artificial. '
+                'Los resultados son orientativos y no sustituyen '
+                'el criterio de un inspector certificado.'
+            )
+
+            ia_rows = [
+                [Paragraph(ia_header_text, self._styles["DataKey"])],
+                [Paragraph(diagnostico_ia.replace("\n", "<br/>"),
+                           self._styles["DataValue"])],
+            ]
+
+            ia_t = Table(ia_rows, colWidths=[tw])
+            ia_t.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (0, 0), colors.HexColor("#FFF3CD")),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]))
+            elements.append(ia_t)
 
         return [KeepTogether(elements)]
 

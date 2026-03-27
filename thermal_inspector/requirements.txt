@@ -10,6 +10,7 @@ numpy>=1.24
 Pillow>=9.0
 reportlab>=4.0
 matplotlib>=3.6
+google-genai>=1.0
 
 # Ya incluido en Python 3 estándar:
 # tkinter (python3-tk)

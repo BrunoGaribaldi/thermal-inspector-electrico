@@ -30,6 +30,16 @@ from pathlib import Path
 # Add this folder to path so imports work
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Load .env file if present
+_env_path = Path(__file__).parent / ".env"
+if _env_path.is_file():
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ.setdefault(_k.strip(), _v.strip())
+
 from file_parser import find_image_pairs
 from extractor import extract_temperature, extract_pseudocolor, get_cache_dir
 from analyzer import LineROI, BoxROI, run_full_analysis
@@ -128,6 +138,8 @@ def parse_args():
                    help="Nombre del inspector")
     p.add_argument("--ubicacion", default="",
                    help="Ubicación general del relevamiento")
+    p.add_argument("--gemini-key", default="",
+                   help="API key de Google Gemini para diagnóstico IA (o env GEMINI_API_KEY)")
     return p.parse_args()
 
 
@@ -171,8 +183,6 @@ def collect_entry_inputs(pole_name: str, ubicacion_general: str) -> dict:
     precinto = prompt("  Precinto", default="N/A")
     diagnostico_texto = prompt("  Texto diagnóstico",
                                 default="No se observan puntos calientes ni perfil térmico anormal.")
-    recomendaciones = prompt("  Recomendaciones", default="")
-    reparaciones = prompt("  Reparaciones realizadas", default="")
 
     return {
         "ubicacion": ubicacion,
@@ -181,13 +191,12 @@ def collect_entry_inputs(pole_name: str, ubicacion_general: str) -> dict:
         "prioridad": prioridad,
         "precinto": precinto,
         "diagnostico_texto": diagnostico_texto,
-        "recomendaciones": recomendaciones,
-        "reparaciones": reparaciones,
     }
 
 
 def process_image(pair: dict, args, cache_base: str,
-                   pole_coords: dict | None = None) -> dict:
+                   pole_coords: dict | None = None,
+                   gemini_key: str = "") -> dict:
     """Full pipeline for one thermal/RGB pair."""
     pole_name = pair["pole_name"]
     thermal_path = pair["thermal"].path
@@ -247,10 +256,31 @@ def process_image(pair: dict, args, cache_base: str,
     else:
         color_rgb_annotated = color_rgb
 
-    # 6. Collect user text inputs
+    # 6. AI diagnosis via Gemini
+    diagnostico_ia = ""
+    if gemini_key:
+        print("  [IA] Enviando imágenes a Gemini para diagnóstico...")
+        try:
+            from gemini_inspector import analyze_pole
+            diagnostico_ia = analyze_pole(
+                api_key=gemini_key,
+                pole_name=pole_name,
+                thermal_rgb=color_rgb,
+                visual_path=rgb_path,
+                t_min=float(temp_array.min()),
+                t_max=float(temp_array.max()),
+            )
+            if diagnostico_ia:
+                print(f"        Diagnóstico IA recibido ({len(diagnostico_ia)} caracteres)")
+            else:
+                print("        Diagnóstico IA: sin respuesta")
+        except Exception as e:
+            print(f"        ERROR en diagnóstico IA: {e}")
+
+    # 7. Collect user text inputs
     user_data = collect_entry_inputs(pole_name, args.ubicacion)
 
-    # 7. Look up GPS coordinates for this pole
+    # 8. Look up GPS coordinates for this pole
     gps_coord = ""
     gps_url = ""
     pole_num = _extract_pole_number(pole_name)
@@ -272,6 +302,7 @@ def process_image(pair: dict, args, cache_base: str,
         "timestamp": pair["thermal"].timestamp,
         "gps_coord": gps_coord,
         "gps_url": gps_url,
+        "diagnostico_ia": diagnostico_ia,
     }
 
     return entry
@@ -326,6 +357,13 @@ def main():
     if not os.path.isfile(logo_path):
         logo_path = None
 
+    # Gemini API key
+    gemini_key = args.gemini_key or os.environ.get("GEMINI_API_KEY", "")
+    if gemini_key:
+        print("\nDiagnóstico IA habilitado (Gemini)")
+    else:
+        print("\nDiagnóstico IA deshabilitado (usar --gemini-key o env GEMINI_API_KEY)")
+
     # Process each image
     report = ThermalReport(pdf_path, meta, logo_path=logo_path)
     processed = 0
@@ -333,7 +371,8 @@ def main():
     for i, pair in enumerate(pairs, 1):
         print(f"\n[ Imagen {i}/{len(pairs)} ]")
         try:
-            entry = process_image(pair, args, str(cache_dir), pole_coords)
+            entry = process_image(pair, args, str(cache_dir), pole_coords,
+                                  gemini_key=gemini_key)
             page = report.add_entry(entry)
             print(f"  Entrada agregada al informe (pág. {page})")
             processed += 1
