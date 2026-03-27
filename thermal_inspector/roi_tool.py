@@ -80,8 +80,14 @@ class ROITool:
 
     def run(self) -> tuple:
         """Open window, block until user presses 'q'. Returns (lines, boxes)."""
+        existing_root = tk._default_root
         try:
-            self._root = tk.Tk()
+            if existing_root:
+                self._root = tk.Toplevel(existing_root)
+                self._is_toplevel = True
+            else:
+                self._root = tk.Tk()
+                self._is_toplevel = False
         except tk.TclError as e:
             raise RuntimeError(f"Cannot open display: {e}")
 
@@ -90,12 +96,16 @@ class ROITool:
 
         self._setup_ui()
         self._root.focus_set()
-        self._root.mainloop()
 
-        try:
-            self._root.destroy()
-        except Exception:
-            pass
+        if self._is_toplevel:
+            self._root.grab_set()
+            self._root.wait_window()
+        else:
+            self._root.mainloop()
+            try:
+                self._root.destroy()
+            except Exception:
+                pass
 
         return self._lines, self._boxes
 
@@ -351,4 +361,8 @@ class ROITool:
             ):
                 return
         self._result_ready = True
-        self._root.quit()
+        if hasattr(self, '_is_toplevel') and self._is_toplevel:
+            self._root.grab_release()
+            self._root.destroy()
+        else:
+            self._root.quit()

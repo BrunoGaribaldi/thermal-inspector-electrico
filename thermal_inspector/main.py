@@ -120,8 +120,8 @@ def parse_args():
         description="Inspector Termográfico — Genera informes PDF desde imágenes DJI R-JPEG",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    p.add_argument("--images", required=True,
-                   help="Carpeta con las imágenes DJI térmicas (R-JPEG)")
+    p.add_argument("--images", required=False, default=None,
+                   help="Carpeta con las imágenes DJI térmicas (R-JPEG). Si se omite, se abre la GUI.")
     p.add_argument("--output", default=None,
                    help="Ruta de salida del PDF (por defecto: output/Informe_TIMESTAMP.pdf)")
     p.add_argument("--emissivity", type=float, default=0.95,
@@ -310,6 +310,11 @@ def process_image(pair: dict, args, cache_base: str,
 
 def main():
     args = parse_args()
+
+    if not args.images:
+        from gui import main as gui_main
+        gui_main()
+        return
 
     # Setup output dirs
     script_dir = Path(__file__).parent
